@@ -11,6 +11,21 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
+    - name: Port fullcone support from ImmortalWrt
+      run: |
+        set -e
+        IW=https://raw.githubusercontent.com/immortalwrt/immortalwrt/11152dd84230f07dcc524137c81db15b818093c9
+        mkdir -p package/network/utils/fullconenat-nft/patches
+        mkdir -p package/libs/libnftnl/patches
+        mkdir -p package/network/utils/nftables/patches
+        mkdir -p package/network/config/firewall4/patches
+        curl -fL "$IW/package/network/utils/fullconenat-nft/Makefile" -o package/network/utils/fullconenat-nft/Makefile
+        curl -fL "$IW/package/network/utils/fullconenat-nft/patches/010-fix-build-with-kernel-6.12.patch" -o package/network/utils/fullconenat-nft/patches/010-fix-build-with-kernel-6.12.patch
+        curl -fL "$IW/package/libs/libnftnl/patches/001-libnftnl-add-fullcone-expression-support.patch" -o package/libs/libnftnl/patches/001-libnftnl-add-fullcone-expression-support.patch
+        curl -fL "$IW/package/network/utils/nftables/patches/002-nftables-add-fullcone-expression-support.patch" -o package/network/utils/nftables/patches/002-nftables-add-fullcone-expression-support.patch
+        curl -fL "$IW/package/network/config/firewall4/patches/001-firewall4-add-support-for-fullcone-nat.patch" -o package/network/config/firewall4/patches/001-firewall4-add-support-for-fullcone-nat.patch
+        ls -la package/network/utils/fullconenat-nft package/network/config/firewall4/patches
+
     - name: Cache dl
       uses: actions/cache@v4
       with:
@@ -52,6 +67,9 @@ jobs:
         CONFIG_TARGET_qualcommax=y
         CONFIG_TARGET_qualcommax_ipq50xx=y
         CONFIG_TARGET_qualcommax_ipq50xx_DEVICE_cmcc_rax3000q=y
+
+        # Full-cone NAT support
+        CONFIG_PACKAGE_kmod-nft-fullcone=y
 
         # LuCI Web management UI + Chinese
         CONFIG_PACKAGE_luci=y
