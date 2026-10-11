@@ -113,6 +113,9 @@ jobs:
 
     - name: Build packages only (no firmware)
       run: |
+        make -j$(nproc) tools/install
+        make -j$(nproc) toolchain/install
+        make -j$(nproc) target/linux/compile
         make -j$(nproc) package/oaf/compile package/open-app-filter/compile package/luci-app-oaf/compile || {
           echo "===== 失败的包日志 ====="
           find logs -name "*.txt" -exec sh -c 'echo "--- $1 ---"; tail -n 60 "$1"' _ {} \; 2>/dev/null || true
