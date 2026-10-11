@@ -113,14 +113,13 @@ jobs:
 
     - name: Build packages only (no firmware)
       run: |
-        make -j$(nproc) package/kmod-oaf/compile package/appfilter/compile package/luci-app-oaf/compile V=s || \
-        make -j1 package/kmod-oaf/compile package/appfilter/compile package/luci-app-oaf/compile V=s
+        make -j$(nproc) package/oaf/compile package/open-app-filter/compile package/luci-app-oaf/compile || \
+        make -j1 package/oaf/compile package/open-app-filter/compile package/luci-app-oaf/compile
 
     - name: Collect apk files
       run: |
         mkdir -p oaf-apks
-        find bin -name "*.apk" -path "*oaf*" -exec cp {} oaf-apks/ \; 2>/dev/null || true
-        find bin -name "libsqlite3*.apk" -exec cp {} oaf-apks/ \; 2>/dev/null || true
+        find bin \( -name "kmod-oaf-*.apk" -o -name "appfilter-*.apk" -o -name "luci-app-oaf-*.apk" -o -name "libsqlite3*.apk" \) -exec cp {} oaf-apks/ \;
         echo "== 产出 =="; ls -la oaf-apks/
 
     - name: Upload packages
