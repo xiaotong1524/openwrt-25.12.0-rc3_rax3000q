@@ -1,0 +1,135 @@
+name: Build RAX3000Q (32bit, with LuCI)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Port fullcone support from ImmortalWrt
+      run: |
+        set -e
+        IW=https://raw.githubusercontent.com/immortalwrt/immortalwrt/ce35a9e4ef1b87fbbc2146036ce6693e4242861a
+        mkdir -p package/network/utils/fullconenat-nft/patches
+        curl -fL "$IW/package/network/utils/fullconenat-nft/Makefile" -o package/network/utils/fullconenat-nft/Makefile
+        curl -fL "$IW/package/network/utils/fullconenat-nft/patches/010-fix-build-with-kernel-6.12.patch" -o package/network/utils/fullconenat-nft/patches/010-fix-build-with-kernel-6.12.patch
+        rm -rf package/libs/libnftnl
+        mkdir -p package/libs/libnftnl/patches
+        curl -fL "$IW/package/libs/libnftnl/Makefile" -o package/libs/libnftnl/Makefile
+        curl -fL "$IW/package/libs/libnftnl/patches/001-libnftnl-add-fullcone-expression-support.patch" -o package/libs/libnftnl/patches/001-libnftnl-add-fullcone-expression-support.patch
+        rm -rf package/network/utils/nftables
+        mkdir -p package/network/utils/nftables/patches
+        curl -fL "$IW/package/network/utils/nftables/Makefile" -o package/network/utils/nftables/Makefile
+        for p in 001-build-simplify-the-instantiation-of-nftversion-h 002-build-generate-build-time-stamp-once-at-configure 002-nftables-add-fullcone-expression-support 003-build-support-SOURCE_DATE_EPOCH-for-build-time-stamp; do
+          curl -fL "$IW/package/network/utils/nftables/patches/$p.patch" -o "package/network/utils/nftables/patches/$p.patch"
+        done
+        mkdir -p package/network/config/firewall4/patches
+        curl -fL "$IW/package/network/config/firewall4/patches/001-firewall4-add-support-for-fullcone-nat.patch" -o package/network/config/firewall4/patches/001-firewall4-add-support-for-fullcone-nat.patch
+
+    - name: Add OpenAppFilter (destan19, pinned)
+      run: |
+        set -e
+        curl -fL https://codeload.github.com/destan19/OpenAppFilter/tar.gz/7fcf9e87dc75f7c28c74e09504a4efa0a2db3c92 -o /tmp/oaf.tar.gz
+        mkdir -p /tmp/oaf-src
+        tar -xzf /tmp/oaf.tar.gz -C /tmp/oaf-src --strip-components=1
+        cp -r /tmp/oaf-src/oaf package/
+        cp -r /tmp/oaf-src/open-app-filter package/
+        cp -r /tmp/oaf-src/luci-app-oaf package/
+
+    - name: Cache dl
+      uses: actions/cache@v4
+      with:
+        path: dl
+        key: dl-cache-32
+
+    - name: Cache ccache
+      uses: actions/cache@v4
+      with:
+        path: ~/.ccache
+        key: ccache-32-${{ runner.os }}
+        restore-keys: ccache-32-
+
+    - name: Cache host tools
+      uses: actions/cache@v4
+      with:
+        path: build_dir/host
+        key: host-tools-32
+
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y build-essential clang flex bison g++ gawk \
+        gcc-multilib g++-multilib gettext git libncurses5-dev libssl-dev \
+        python3-setuptools rsync unzip zlib1g-dev file wget ccache
+
+    - name: Fix permissions
+      run: chmod -R +x .
+
+    - name: Update & install feeds
+      run: |
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+
+    - name: Generate config (32-bit + all packages)
+      run: |
+        rm -f .config
+        cat > .config <<'EOF'
+        CONFIG_TARGET_qualcommax=y
+        CONFIG_TARGET_qualcommax_ipq50xx=y
+        CONFIG_TARGET_qualcommax_ipq50xx_DEVICE_cmcc_rax3000q=y
+
+        # Force 32-bit ARM
+        CONFIG_ARCH_32=y
+        CONFIG_ARM=y
+        # CONFIG_ARM64 is not set
+        # CONFIG_64BIT is not set
+
+        # Full-cone NAT support
+        CONFIG_PACKAGE_kmod-nft-fullcone=y
+
+        # OpenAppFilter (app filtering / parental control)
+        CONFIG_PACKAGE_luci-app-oaf=y
+
+        # frp client for reverse proxy / website
+        CONFIG_PACKAGE_luci-app-frpc=y
+        CONFIG_PACKAGE_luci-i18n-frpc-zh-cn=y
+
+        # LuCI Web management UI + Chinese
+        CONFIG_PACKAGE_luci=y
+        CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
+        CONFIG_PACKAGE_luci-i18n-firewall-zh-cn=y
+        CONFIG_PACKAGE_luci-app-package-manager=y
+        CONFIG_PACKAGE_luci-i18n-package-manager-zh-cn=y
+        CONFIG_PACKAGE_luci-app-attendedsysupgrade=y
+        CONFIG_PACKAGE_luci-i18n-attendedsysupgrade-zh-cn=y
+
+        # common tools
+        CONFIG_PACKAGE_htop=y
+        CONFIG_PACKAGE_curl=y
+        CONFIG_PACKAGE_iperf3=y
+        CONFIG_PACKAGE_openssh-sftp-server=y
+
+        # disk / samba (optional, delete if unwanted)
+        CONFIG_PACKAGE_block-mount=y
+        CONFIG_PACKAGE_kmod-fs-ext4=y
+        CONFIG_PACKAGE_kmod-fs-vfat=y
+        CONFIG_PACKAGE_kmod-usb-storage=y
+        CONFIG_PACKAGE_luci-app-samba4=y
+        CONFIG_PACKAGE_luci-i18n-samba4-zh-cn=y
+        EOF
+        make defconfig
+
+    - name: Build firmware
+      run: |
+        make -j$(nproc) || make -j1 V=s
+
+    - name: Upload firmware
+      uses: actions/upload-artifact@v4
+      with:
+        name: rax3000q-firmware-32bit-luci
+        path: bin/targets/
