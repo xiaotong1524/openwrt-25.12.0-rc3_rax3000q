@@ -1,0 +1,130 @@
+name: Build OAF packages (offline install)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # 与固件构建完全一致的内核环境(保证 vermagic 一致,kmod 才能装)
+    - name: Port fullcone support from ImmortalWrt
+      run: |
+        set -e
+        IW=https://raw.githubusercontent.com/immortalwrt/immortalwrt/ce35a9e4ef1b87fbbc2146036ce6693e4242861a
+        mkdir -p package/network/utils/fullconenat-nft/patches
+        curl -fL "$IW/package/network/utils/fullconenat-nft/Makefile" -o package/network/utils/fullconenat-nft/Makefile
+        curl -fL "$IW/package/network/utils/fullconenat-nft/patches/010-fix-build-with-kernel-6.12.patch" -o package/network/utils/fullconenat-nft/patches/010-fix-build-with-kernel-6.12.patch
+        rm -rf package/libs/libnftnl
+        mkdir -p package/libs/libnftnl/patches
+        curl -fL "$IW/package/libs/libnftnl/Makefile" -o package/libs/libnftnl/Makefile
+        curl -fL "$IW/package/libs/libnftnl/patches/001-libnftnl-add-fullcone-expression-support.patch" -o package/libs/libnftnl/patches/001-libnftnl-add-fullcone-expression-support.patch
+        rm -rf package/network/utils/nftables
+        mkdir -p package/network/utils/nftables/patches
+        curl -fL "$IW/package/network/utils/nftables/Makefile" -o package/network/utils/nftables/Makefile
+        for p in 001-build-simplify-the-instantiation-of-nftversion-h 002-build-generate-build-time-stamp-once-at-configure 002-nftables-add-fullcone-expression-support 003-build-support-SOURCE_DATE_EPOCH-for-build-time-stamp; do
+          curl -fL "$IW/package/network/utils/nftables/patches/$p.patch" -o "package/network/utils/nftables/patches/$p.patch"
+        done
+        mkdir -p package/network/config/firewall4/patches
+        curl -fL "$IW/package/network/config/firewall4/patches/001-firewall4-add-support-for-fullcone-nat.patch" -o package/network/config/firewall4/patches/001-firewall4-add-support-for-fullcone-nat.patch
+
+    - name: Add OpenAppFilter (destan19, pinned)
+      run: |
+        set -e
+        curl -fL https://codeload.github.com/destan19/OpenAppFilter/tar.gz/7fcf9e87dc75f7c28c74e09504a4efa0a2db3c92 -o /tmp/oaf.tar.gz
+        mkdir -p /tmp/oaf-src
+        tar -xzf /tmp/oaf.tar.gz -C /tmp/oaf-src --strip-components=1
+        cp -r /tmp/oaf-src/oaf package/
+        cp -r /tmp/oaf-src/open-app-filter package/
+        cp -r /tmp/oaf-src/luci-app-oaf package/
+
+    - name: Cache dl
+      uses: actions/cache@v4
+      with:
+        path: dl
+        key: dl-cache-luci
+
+    - name: Cache ccache
+      uses: actions/cache@v4
+      with:
+        path: ~/.ccache
+        key: ccache-luci-${{ runner.os }}
+        restore-keys: ccache-luci-
+
+    - name: Cache host tools
+      uses: actions/cache@v4
+      with:
+        path: build_dir/host
+        key: host-tools-luci
+
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y build-essential clang flex bison g++ gawk \
+        gcc-multilib g++-multilib gettext git libncurses5-dev libssl-dev \
+        python3-setuptools rsync unzip zlib1g-dev file wget ccache
+
+    - name: Fix permissions
+      run: chmod -R +x .
+
+    - name: Update & install feeds
+      run: |
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+
+    - name: Generate config (identical kernel config as firmware)
+      run: |
+        rm -f .config
+        cat > .config <<'EOF'
+        CONFIG_TARGET_qualcommax=y
+        CONFIG_TARGET_qualcommax_ipq50xx=y
+        CONFIG_TARGET_qualcommax_ipq50xx_DEVICE_cmcc_rax3000q=y
+
+        # 与固件构建保持一致(内核 vermagic 必须相同)
+        CONFIG_PACKAGE_kmod-nft-fullcone=y
+        CONFIG_PACKAGE_luci=y
+        CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
+        CONFIG_PACKAGE_luci-i18n-firewall-zh-cn=y
+        CONFIG_PACKAGE_luci-app-package-manager=y
+        CONFIG_PACKAGE_luci-i18n-package-manager-zh-cn=y
+        CONFIG_PACKAGE_luci-app-attendedsysupgrade=y
+        CONFIG_PACKAGE_luci-i18n-attendedsysupgrade-zh-cn=y
+        CONFIG_PACKAGE_htop=y
+        CONFIG_PACKAGE_curl=y
+        CONFIG_PACKAGE_iperf3=y
+        CONFIG_PACKAGE_openssh-sftp-server=y
+        CONFIG_PACKAGE_block-mount=y
+        CONFIG_PACKAGE_kmod-fs-ext4=y
+        CONFIG_PACKAGE_kmod-fs-vfat=y
+        CONFIG_PACKAGE_kmod-usb-storage=y
+        CONFIG_PACKAGE_luci-app-samba4=y
+        CONFIG_PACKAGE_luci-i18n-samba4-zh-cn=y
+
+        # 本次要产出的软件包
+        CONFIG_PACKAGE_kmod-oaf=y
+        CONFIG_PACKAGE_appfilter=y
+        CONFIG_PACKAGE_luci-app-oaf=y
+        EOF
+        make defconfig
+
+    - name: Build packages only (no firmware)
+      run: |
+        make -j$(nproc) package/kmod-oaf/compile package/appfilter/compile package/luci-app-oaf/compile V=s || \
+        make -j1 package/kmod-oaf/compile package/appfilter/compile package/luci-app-oaf/compile V=s
+
+    - name: Collect apk files
+      run: |
+        mkdir -p oaf-apks
+        find bin -name "*.apk" -path "*oaf*" -exec cp {} oaf-apks/ \; 2>/dev/null || true
+        find bin -name "libsqlite3*.apk" -exec cp {} oaf-apks/ \; 2>/dev/null || true
+        echo "== 产出 =="; ls -la oaf-apks/
+
+    - name: Upload packages
+      uses: actions/upload-artifact@v4
+      with:
+        name: oaf-packages
+        path: oaf-apks/
