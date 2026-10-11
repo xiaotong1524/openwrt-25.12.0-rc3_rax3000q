@@ -15,16 +15,27 @@ jobs:
       run: |
         set -e
         IW=https://raw.githubusercontent.com/immortalwrt/immortalwrt/11152dd84230f07dcc524137c81db15b818093c9
+        # 1. fullcone kernel module
         mkdir -p package/network/utils/fullconenat-nft/patches
-        mkdir -p package/libs/libnftnl/patches
-        mkdir -p package/network/utils/nftables/patches
-        mkdir -p package/network/config/firewall4/patches
         curl -fL "$IW/package/network/utils/fullconenat-nft/Makefile" -o package/network/utils/fullconenat-nft/Makefile
         curl -fL "$IW/package/network/utils/fullconenat-nft/patches/010-fix-build-with-kernel-6.12.patch" -o package/network/utils/fullconenat-nft/patches/010-fix-build-with-kernel-6.12.patch
+        # 2. libnftnl - full package from ImmortalWrt (1.3.1 + autoreconf fixup + fullcone expression)
+        rm -rf package/libs/libnftnl
+        mkdir -p package/libs/libnftnl/patches
+        curl -fL "$IW/package/libs/libnftnl/Makefile" -o package/libs/libnftnl/Makefile
         curl -fL "$IW/package/libs/libnftnl/patches/001-libnftnl-add-fullcone-expression-support.patch" -o package/libs/libnftnl/patches/001-libnftnl-add-fullcone-expression-support.patch
-        curl -fL "$IW/package/network/utils/nftables/patches/002-nftables-add-fullcone-expression-support.patch" -o package/network/utils/nftables/patches/002-nftables-add-fullcone-expression-support.patch
+        # 3. nftables - full package from ImmortalWrt (1.1.6 + build patches + fullcone expression)
+        rm -rf package/network/utils/nftables
+        mkdir -p package/network/utils/nftables/patches
+        curl -fL "$IW/package/network/utils/nftables/Makefile" -o package/network/utils/nftables/Makefile
+        for p in 000-build-fix-configure-with-non-bash-shell 001-build-simplify-the-instantiation-of-nftversion-h 002-build-generate-build-time-stamp-once-at-configure 002-nftables-add-fullcone-expression-support 003-build-support-SOURCE_DATE_EPOCH-for-build-time-stamp; do
+          curl -fL "$IW/package/network/utils/nftables/patches/$p.patch" -o "package/network/utils/nftables/patches/$p.patch"
+        done
+        # 4. firewall4 fullcone option (fw4 source is the same commit on both sides)
+        mkdir -p package/network/config/firewall4/patches
         curl -fL "$IW/package/network/config/firewall4/patches/001-firewall4-add-support-for-fullcone-nat.patch" -o package/network/config/firewall4/patches/001-firewall4-add-support-for-fullcone-nat.patch
-        ls -la package/network/utils/fullconenat-nft package/network/config/firewall4/patches
+        echo "== ported files =="
+        find package/libs/libnftnl package/network/utils/nftables package/network/utils/fullconenat-nft package/network/config/firewall4/patches -type f
 
     - name: Cache dl
       uses: actions/cache@v4
